@@ -32,6 +32,21 @@ pub enum QosKind<T> {
     Specific(T),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveryConfig {
+    pub participant_lease_duration: Duration,
+    pub participant_announcement_period: Duration,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            participant_lease_duration: Duration::new(10, 0),  // Finite default for detection
+            participant_announcement_period: Duration::new(3, 0),  // ~1/3 of lease
+        }
+    }
+}
+
 /// QoS policies applicable to the [`DomainParticipant`](crate::domain::domain_participant::DomainParticipant)
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct DomainParticipantQos {
@@ -39,6 +54,16 @@ pub struct DomainParticipantQos {
     pub user_data: UserDataQosPolicy,
     /// Value of the entity factory QoS policy.
     pub entity_factory: EntityFactoryQosPolicy,
+    // Value of discovery config.
+    pub discovery_config: DiscoveryConfig,
+}
+
+impl DomainParticipantQos {
+    pub fn default() -> Self {
+        user_data: UserDataQosPolicy::const_default(),
+        entity_factory: EntityFactoryQosPolicy::const_default()
+        discovery_config: DiscoveryConfig::const_default(),
+    }
 }
 
 /// QoS policies applicable to the [`Publisher`](crate::publication::publisher::Publisher)

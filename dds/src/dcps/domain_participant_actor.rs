@@ -109,6 +109,13 @@ pub fn poll_timeout<T>(
     })
 }
 
+#[derive(Clone, Debug)]
+pub struct RemoteParticipantInfo {
+    pub last_spdp_received: Duration,  // Or Duration if using relative timestamps
+    pub participant_data: SpdpDiscoveredParticipantData,  // Store full data for unmatching
+    // Add other fields if needed (e.g., locators)
+}
+
 pub struct DomainParticipantActor<R: DdsRuntime> {
     pub transport: DdsTransportParticipant,
     pub instance_handle_counter: InstanceHandleCounter,
@@ -117,6 +124,8 @@ pub struct DomainParticipantActor<R: DdsRuntime> {
     pub clock_handle: R::ClockHandle,
     pub timer_handle: R::TimerHandle,
     pub spawner_handle: R::SpawnerHandle,
+    pub discovery_config: DiscoveryConfig,
+    pub remote_participants: Arc<Mutex<HashMap<GuidPrefix, RemoteParticipantInfo>>>,
 }
 
 impl<R> DomainParticipantActor<R>
@@ -130,8 +139,12 @@ where
         clock_handle: R::ClockHandle,
         timer_handle: R::TimerHandle,
         spawner_handle: R::SpawnerHandle,
+        discovery_config: DiscoveryConfig,
     ) -> Self {
-        Self {
+        let remote_participants = Arc::new(Mutex::new(HashMap::new()));
+        
+        let mut actor = Self {
+
             transport,
             instance_handle_counter,
             entity_counter: 0,
@@ -139,7 +152,52 @@ where
             clock_handle,
             timer_handle,
             spawner_handle,
-        }
+            discovery_config,
+            remote_participants,
+        };
+
+        actor.spawn_liveliness_timeout_task();
+
+        actor
+    }
+
+    fn spawn_liveliness_timeout_task(&mut self) {
+        let remote_participants = self.remote_participants.clone();
+        let timer_handle = self.timer_handle.clone();
+        let spawner_handle = self.spawner_handle.clone();
+        let clock_handle = self.clock_handle.clone();
+        let lease_duration = self.discovery_config.participant_lease_duration;
+        // Assume self has a way to get the actor's address for self-messages (e.g., a self_sender field; add if needed)
+        // For now, we'll make the task send messages to a shared channel or directly unmatch here (adjust based on actor model)
+
+        self.spawner_handle.spawn(async move {
+            let mut check_interval = timer_handle.interval(Duration::new(1, 0));  // Check every 1s
+            loop {
+                check_interval.tick().await;
+                let now = clock_handle.now(); 
+                let mut guard = remote_participants.lock().unwrap();
+                let mut to_remove = Vec::new();
+                for (guid_prefix, info) in guard.iter() {
+                    if (now - info.last_spdp_received) > lease_duration {
+                        to_remove.push(*guid_prefix);
+                    }
+                }
+                for guid_prefix in to_remove {
+                    guard.remove(&guid_prefix);
+                    // Send message to self to unmatch (Step 5)
+                    // Assuming a self_sender: R::ChannelSender<DomainParticipantMail<R>> in the actor; use it here
+                    // self_sender.send(DomainParticipantMail::Discovery(DiscoveryServiceMail::RemoveRemoteParticipant(guid_prefix))).await.ok();
+                    // For now, placeholder: print or log
+                    println!("Removing disconnected participant: {:?}", guid_prefix);
+                }
+            }
+        });
+    }
+
+    // Placeholder for handle method update (Step 3)
+    pub async fn handle(&mut self, mail: DomainParticipantMail<R>) {
+        // Existing implementation...
+        // We'll update in Step 3
     }
 
     pub fn get_participant_async(

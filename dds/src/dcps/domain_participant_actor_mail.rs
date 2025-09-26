@@ -20,7 +20,7 @@ use crate::{
             StatusKind, SubscriptionMatchedStatus,
         },
         time::{Duration, Time},
-    }, runtime::{DdsRuntime, OneshotSend}, transport::types::CacheChange, xtypes::dynamic_type::DynamicType
+    }, rtps::{structure::SpdpDiscoveredParticipantData, types::GuidPrefix}, runtime::{DdsRuntime, OneshotSend}, transport::types::CacheChange, xtypes::dynamic_type::DynamicType
 };
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use core::{future::Future, pin::Pin};
@@ -508,6 +508,8 @@ pub enum EventServiceMail<R: DdsRuntime> {
 pub enum DiscoveryServiceMail {
     AnnounceParticipant,
     AnnounceDeletedParticipant,
+    ReceivedSpdpData(SpdpDiscoveredParticipantData, GuidPrefix),  // For incoming SPDP
+    RemoveRemoteParticipant(GuidPrefix, SpdpDiscoveredParticipantData),  // For timeout removal (Step 5)
 }
 
 pub enum DomainParticipantMail<R: DdsRuntime> {
@@ -1256,6 +1258,25 @@ impl<R: DdsRuntime> DomainParticipantActor<R> {
             }
             DiscoveryServiceMail::AnnounceDeletedParticipant => {
                 self.announce_deleted_participant().await;
+            }
+            DiscoveryServiceMail::ReceivedSpdpData(spdp_data, source_guid_prefix) => {
+                let now = self.clock_handle.now();
+                let mut guard = self.remote_participants.lock().unwrap();
+                let info = guard.entry(source_guid_prefix)
+                    .or_insert_with(|| RemoteParticipantInfo {
+                        last_spdp_received: now,
+                        participant_data: spdp_data.clone(),
+                    });
+                info.last_spdp_received = now;
+                info.participant_data = spdp_data;  // Update data if changed
+
+                // Existing/NEW: Trigger SEDP discovery or match endpoints
+                // e.g., self.match_endpoints_from_spdp(&info.participant_data).await;  // Implement if needed
+            }
+            DiscoveryServiceMail::RemoveRemoteParticipant(guid_prefix, participant_data) => {
+                // Placeholder for unmatch logic (full impl in Step 5)
+                // Unmatch writers/readers based on participant_data
+                println!("Removing disconnected participant: {:?} with data {:?}", guid_prefix, participant_data);
             }
         }
     }

@@ -172,6 +172,8 @@ impl<R: DdsRuntime> DomainParticipantFactoryActor<R> {
             QosKind::Specific(q) => q,
         };
 
+        let discovery_config = domain_participant_qos.discovery_config.clone();
+
         let guid_prefix = self.create_new_guid_prefix();
         let (participant_sender, mut participant_receiver) = R::channel();
 
@@ -492,6 +494,7 @@ impl<R: DdsRuntime> DomainParticipantFactoryActor<R> {
             clock_handle,
             timer_handle.clone(),
             spawner_handle.clone(),
+            discovery_config,
         );
         let participant_handle = domain_participant_actor
             .domain_participant
@@ -513,8 +516,7 @@ impl<R: DdsRuntime> DomainParticipantFactoryActor<R> {
 
         // Start the regular participant announcement task
         let participant_address = participant_sender.clone();
-        let participant_announcement_interval =
-            self.configuration.participant_announcement_interval();
+        let participant_announcement_interval = discovery_config.participant_announcement_period;
 
         spawner_handle.spawn(async move {
             while participant_address
@@ -723,11 +725,24 @@ impl<R: DdsRuntime> HistoryCache for DcpsParticipantReaderHistoryCache<R> {
         cache_change: CacheChange,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
-            self.participant_address.send(DomainParticipantMail::Message(
-                MessageServiceMail::AddBuiltinParticipantsDetectorCacheChange { cache_change },
-            ))
-            .await
-            .ok();
+            // Extract GuidPrefix from writer_guid
+            let source_guid_prefix = cache_change.writer_guid.guid_prefix;
+
+            // Deserialize data_value into SpdpDiscoveredParticipantData
+            let spdp_data = match SpdpDiscoveredParticipantData::deserialize_from_cdr(&cache_change.data_value) {
+                Ok(spdp) => spdp,
+                Err(e) => {
+                    eprintln!("Failed to deserialize SPDP data: {:?}", e);
+                    return;
+                }
+            };
+
+            // Send DiscoveryServiceMail::ReceivedSpdpData
+            let mail = DomainParticipantMail::Discovery(DiscoveryServiceMail::ReceivedSpdpData(
+                spdp_data,
+                source_guid_prefix,
+            ));
+            self.participant_address.send(mail).await.ok();
         })
     }
 

@@ -26,6 +26,8 @@ use crate::{
         types::{CacheChange, ChangeKind, Guid},
     },
     xtypes::dynamic_type::DynamicType,
+    rtps::types::GuidPrefix,
+    infrastructure::instance::InstanceHandle,
 };
 use alloc::{boxed::Box, collections::VecDeque, string::String, sync::Arc, vec::Vec};
 
@@ -118,6 +120,22 @@ impl<R: DdsRuntime> DataWriterEntity<R> {
             instance_publication_time: Vec::new(),
             instance_samples: Vec::new(),
         }
+    }
+
+    pub fn unmatch_remote_participant(&mut self, remote_guid_prefix: GuidPrefix) -> usize {
+        let initial_count = self.matched_subscription_list.len();
+        let removed_handles: Vec<InstanceHandle> = self
+            .matched_subscription_list
+            .iter()
+            .filter(|sub| sub.participant_key().guid_prefix() == remote_guid_prefix)
+            .map(|sub| InstanceHandle::new(sub.key().value))
+            .collect();
+
+        for handle in &removed_handles {
+            self.remove_matched_subscription(handle);
+        }
+
+        initial_count - self.matched_subscription_list.len()
     }
 
     pub fn type_name(&self) -> &str {
